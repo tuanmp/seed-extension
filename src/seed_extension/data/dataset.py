@@ -145,8 +145,8 @@ class SeedExtensionDataset(ColliderMLDataset):
 
         kwargs = self._kwargs
         min_track_hits: int = kwargs.get("min_track_hits", 5)
-        seed_strategy: str = kwargs.get("seed_strategy", "fixed_innermost")
-        target_vertices: int | None = kwargs.get("target_vertices", None)
+        seed_strategy: str = kwargs.get("seed_strategy", "random_consecutive")
+        target_vertices: int = kwargs.get("target_vertices", 200)
         primary_only: bool = kwargs.get("primary_only", False)
         predict_seed_hits: bool = kwargs.get("predict_seed_hits", False)
         n_seed_hits: int = kwargs.get("n_seed_hits", 3)
