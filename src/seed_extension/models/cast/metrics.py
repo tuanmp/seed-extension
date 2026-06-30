@@ -65,9 +65,10 @@ def compute_binned_metrics(preds, targets, kinematics):
         "z0": (3, torch.tensor([0.0, 0.5, 1.0, 5.0, 10.0, 20.0])),
     }
 
+    device = kinematics.device
     for name, (col_idx, bin_edges) in bin_configs.items():
         vals = kinematics[:, col_idx]
-        bin_idx = _bin_values(vals, bin_edges)
+        bin_idx = _bin_values(vals, bin_edges.to(device))
         for b in range(len(bin_edges) - 1):
             mask = bin_idx == b
             if mask.sum() == 0:
