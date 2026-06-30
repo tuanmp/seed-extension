@@ -12,6 +12,8 @@ data:
   seed_strategy: random_consecutive
   seed_n_samples_val: 1
   min_track_hits: 5
+  min_pT: 0.0
+  max_abs_eta: 4.0
   primary_only: false
   predict_seed_hits: false
   use_detector_features: true

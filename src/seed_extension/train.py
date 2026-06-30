@@ -69,6 +69,8 @@ def main() -> None:
         num_workers=data_cfg["num_workers"],
         dataset_cls=SeedExtensionDataset,
         min_track_hits=data_cfg.get("min_track_hits", 5),
+        min_pT=data_cfg.get("min_pT", 0.0),
+        max_abs_eta=data_cfg.get("max_abs_eta", 4.0),
         seed_strategy=data_cfg.get("seed_strategy", "random_consecutive"),
         target_vertices=data_cfg.get("target_vertices", 200),
         primary_only=data_cfg.get("primary_only", False),
