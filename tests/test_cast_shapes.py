@@ -2,6 +2,7 @@ import torch
 
 from seed_extension.models.cast.attention import CrossAttentionBlock, CrossAttentionDecoder, SeedSelfAttention
 from seed_extension.models.cast.embedders import FourierEncode, HitEmbedder, SeedEmbedder
+from seed_extension.models.cast.model import CASTModel
 
 
 class TestFourierEncode:
@@ -98,3 +99,86 @@ class TestSeedSelfAttention:
         x = torch.randn(4, 100, 256)
         out = sa(x)
         assert out.shape == x.shape
+
+
+class TestCASTModel:
+    def test_forward_shape(self):
+        model = CASTModel(
+            d_model=128,
+            n_cross_attn_layers=2,
+            n_heads=4,
+            ff_dim=512,
+            dropout=0.0,
+            temperature=0.1,
+            fourier_L=4,
+            use_cylindrical_pe=False,
+            use_seed_self_attn=False,
+            hit_encoder="identity",
+            learning_rate=1e-3,
+        )
+        hits = torch.cat(
+            [
+                torch.randn(2, 500, 3),
+                torch.randint(0, 20, (2, 500, 1)).float(),
+                torch.randint(0, 14, (2, 500, 1)).float(),
+                torch.randint(0, 2, (2, 500, 1)).float(),
+            ],
+            dim=-1,
+        )
+        seeds = torch.randn(2, 50, 9)
+        scores = model(hits, seeds)
+        assert scores.shape == (2, 50, 500)
+
+    def test_training_step_runs(self):
+        model = CASTModel(
+            d_model=64,
+            n_cross_attn_layers=1,
+            n_heads=2,
+            ff_dim=256,
+            dropout=0.0,
+            temperature=0.1,
+            fourier_L=2,
+            use_cylindrical_pe=False,
+            use_seed_self_attn=False,
+            hit_encoder="identity",
+            learning_rate=1e-3,
+        )
+        batch = {
+            "hits": torch.cat(
+                [
+                    torch.randn(1, 100, 3),
+                    torch.randint(0, 20, (1, 100, 1)).float(),
+                    torch.randint(0, 14, (1, 100, 1)).float(),
+                    torch.randint(0, 2, (1, 100, 1)).float(),
+                ],
+                dim=-1,
+            ),
+            "seeds": torch.randn(1, 10, 9),
+            "targets": torch.zeros(1, 10, 100),
+            "hit_particle_ids": torch.zeros(1, 100, dtype=torch.long),
+            "seed_particle_ids": torch.zeros(1, 10, dtype=torch.long),
+            "kinematics": torch.randn(1, 10, 6),
+            "event_idx": 0,
+        }
+        batch["targets"][0, :5, :50] = 1.0
+        loss = model.training_step(batch, 0)
+        assert loss is not None
+        assert loss.item() >= 0.0
+
+    def test_configure_optimizers(self):
+        model = CASTModel(
+            d_model=64,
+            n_cross_attn_layers=1,
+            n_heads=2,
+            ff_dim=256,
+            dropout=0.0,
+            temperature=0.1,
+            fourier_L=2,
+            use_cylindrical_pe=False,
+            use_seed_self_attn=False,
+            hit_encoder="identity",
+            learning_rate=1e-3,
+        )
+        opt_config = model.configure_optimizers()
+        assert "optimizer" in opt_config
+        assert "lr_scheduler" in opt_config
