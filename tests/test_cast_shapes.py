@@ -1,5 +1,6 @@
 import torch
 
+from seed_extension.models.cast.attention import CrossAttentionBlock, CrossAttentionDecoder, SeedSelfAttention
 from seed_extension.models.cast.embedders import FourierEncode, HitEmbedder, SeedEmbedder
 
 
@@ -56,3 +57,44 @@ class TestSeedEmbedder:
         x = torch.randn(4, 200, 9)
         out = emb(x)
         assert out.shape == (4, 200, 256)
+
+
+class TestCrossAttentionBlock:
+    def test_output_shape(self):
+        block = CrossAttentionBlock(d_model=256, n_heads=8, ff_dim=1024, dropout=0.1)
+        queries = torch.randn(4, 100, 256)
+        kv = torch.randn(4, 1000, 256)
+        out = block(queries, kv)
+        assert out.shape == queries.shape
+
+    def test_attention_scores_shape(self):
+        block = CrossAttentionBlock(d_model=256, n_heads=8)
+        queries = torch.randn(2, 50, 256)
+        kv = torch.randn(2, 500, 256)
+        out, attn = block(queries, kv, return_attention=True)
+        assert attn.shape == (2, 50, 500)
+
+
+class TestCrossAttentionDecoder:
+    def test_output_shape(self):
+        decoder = CrossAttentionDecoder(d_model=256, n_heads=8, ff_dim=1024, n_layers=3, dropout=0.1)
+        queries = torch.randn(4, 100, 256)
+        kv = torch.randn(4, 1000, 256)
+        out = decoder(queries, kv)
+        assert out.shape == queries.shape
+
+    def test_return_attention(self):
+        decoder = CrossAttentionDecoder(d_model=128, n_heads=4, ff_dim=512, n_layers=2, dropout=0.0)
+        queries = torch.randn(2, 10, 128)
+        kv = torch.randn(2, 100, 128)
+        out, attn = decoder(queries, kv, return_attention=True)
+        assert out.shape == queries.shape
+        assert attn.shape == (2, 10, 100)
+
+
+class TestSeedSelfAttention:
+    def test_output_shape(self):
+        sa = SeedSelfAttention(d_model=256, n_heads=8, dropout=0.1)
+        x = torch.randn(4, 100, 256)
+        out = sa(x)
+        assert out.shape == x.shape
