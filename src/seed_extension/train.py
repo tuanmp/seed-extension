@@ -45,9 +45,10 @@ def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
 
-    seed = int(cfg.get("seed", 42))
+    seed = cfg.get("seed")
     deterministic = bool(cfg.get("trainer", {}).get("deterministic", True))
-    seed_everything(seed=seed, deterministic=deterministic)
+    if seed is not None:
+        seed_everything(seed=int(seed), deterministic=deterministic)
 
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]

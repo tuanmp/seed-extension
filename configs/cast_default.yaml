@@ -1,5 +1,5 @@
 experiment_name: cast_baseline
-seed: 42
+# seed: 42  # uncomment for reproducibility
 
 data:
   process: ttbar
