@@ -71,7 +71,7 @@ def build_seeds_fixed(
 def build_seeds_random_consecutive(
     part_df: "pd.DataFrame", hit_df: "pd.DataFrame",  # noqa: F821
     n_seed_hits: int = 3,
-    rng: np.random.Generator | None = None,
+    rng: np.random.RandomState | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build seeds from randomly-chosen consecutive-layer hit groups.
 
@@ -84,7 +84,7 @@ def build_seeds_random_consecutive(
     import pandas as pd
 
     if rng is None:
-        rng = np.random.default_rng()
+        rng = np.random.RandomState(0)
 
     seed_coords_list = []
     seed_pids_list = []
@@ -174,8 +174,9 @@ class SeedExtensionDataset(ColliderMLDataset):
             and self.stage in ("fit",)
         )
         if use_consecutive:
+            rng = np.random.RandomState(event_idx * 10007 + 42)
             seed_coords, seed_pids, kinematics = build_seeds_random_consecutive(
-                part_df, hit_df, n_seed_hits=n_seed_hits,
+                part_df, hit_df, n_seed_hits=n_seed_hits, rng=rng,
             )
         else:
             seed_coords, seed_pids, kinematics = build_seeds_fixed(
@@ -206,20 +207,27 @@ class SeedExtensionDataset(ColliderMLDataset):
 
         # ---- 6. Zero out seed hits from targets if predict_seed_hits=False ----
         if not predict_seed_hits:
-            # For each seed, find the matching hit indices by xyz proximity.
-            seed_xyz = seed_coords  # (N_s, 9) — flatten of 3 hits
-            for s in range(N_s):
-                for h in range(3):
-                    sx = seed_xyz[s, h * 3]
-                    sy = seed_xyz[s, h * 3 + 1]
-                    sz = seed_xyz[s, h * 3 + 2]
+            # Exclude seed hits from targets by finding closest hit to each seed coordinate
+            hit_xy = hit_features[:, :3]
+            expected_zero = N_s * 3
+            zeroed = 0
+            for s, sc in enumerate(seed_coords):
+                for k in range(3):
+                    sx, sy, sz = sc[k*3], sc[k*3+1], sc[k*3+2]
                     dist = np.sqrt(
-                        (hit_features[:, 0] - sx) ** 2
-                        + (hit_features[:, 1] - sy) ** 2
-                        + (hit_features[:, 2] - sz) ** 2
+                        (hit_xy[:, 0] - sx)**2 +
+                        (hit_xy[:, 1] - sy)**2 +
+                        (hit_xy[:, 2] - sz)**2
                     )
-                    match_idx = np.where(dist < 1e-4)[0]
-                    targets[s, match_idx] = 0.0
+                    closest = np.argmin(dist)
+                    if dist[closest] < 1e-4:
+                        targets[s, closest] = 0.0
+                        zeroed += 1
+            if zeroed < expected_zero:
+                print(
+                    f"WARNING: Only {zeroed}/{expected_zero} seed hits matched for exclusion. "
+                    f"Some seed hits may remain in targets."
+                )
 
         return {
             "hits": torch.from_numpy(hit_features),
