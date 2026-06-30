@@ -19,6 +19,6 @@ def info_nce_loss(scores, targets, temperature=0.1):
     denominator = exp_scores.sum(dim=-1)
     has_positives = numerator > 0
     if not has_positives.any():
-        return torch.tensor(0.0, device=scores.device)
+        return scores.sum() * 0.0
     loss_per_seed = -torch.log(numerator[has_positives] / denominator[has_positives])
     return loss_per_seed.mean()
