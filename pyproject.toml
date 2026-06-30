@@ -10,6 +10,7 @@ dependencies = [
   "torchvision>=0.17,<1.0",
   "numpy>=1.26,<3.0",
   "pyyaml>=6.0,<7.0",
+  "colliderml-dataloader @ git+https://github.com/tuanmp/colliderml-dataloader.git",
 ]
 
 [dependency-groups]
@@ -17,12 +18,8 @@ dev = [
   "pytest>=8.0,<9.0",
 ]
 
-[build-system]
-requires = ["hatchling>=1.24.0"]
-build-backend = "hatchling.build"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/ml_cookbook"]
+packages = ["src/ml_cookbook", "src/seed_extension"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
