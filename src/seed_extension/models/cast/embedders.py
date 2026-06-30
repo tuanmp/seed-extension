@@ -42,9 +42,9 @@ class HitEmbedder(nn.Module):
             input_dim += self.cylindrical_fourier.output_dim
 
         if use_detector_features:
-            self.layer_embed = nn.Embedding(20, 16)
-            self.volume_embed = nn.Embedding(14, 16)
-            self.detector_embed = nn.Embedding(2, 16)
+            self.layer_embed = nn.Embedding(64, 16)
+            self.volume_embed = nn.Embedding(64, 16)
+            self.detector_embed = nn.Embedding(16, 16)
             input_dim += 48
 
         self.mlp = nn.Sequential(

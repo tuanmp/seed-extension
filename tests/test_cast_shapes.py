@@ -31,9 +31,9 @@ class TestHitEmbedder:
         x = torch.cat(
             [
                 torch.randn(4, 100, 3),  # xyz
-                torch.randint(0, 20, (4, 100, 1)),  # layer_id
-                torch.randint(0, 14, (4, 100, 1)),  # volume_id
-                torch.randint(0, 2, (4, 100, 1)),  # detector
+                torch.randint(0, 64, (4, 100, 1)),  # layer_id
+                torch.randint(0, 64, (4, 100, 1)),  # volume_id
+                torch.randint(0, 16, (4, 100, 1)),  # detector
             ],
             dim=-1,
         ).float()
@@ -119,9 +119,9 @@ class TestCASTModel:
         hits = torch.cat(
             [
                 torch.randn(2, 500, 3),
-                torch.randint(0, 20, (2, 500, 1)).float(),
-                torch.randint(0, 14, (2, 500, 1)).float(),
-                torch.randint(0, 2, (2, 500, 1)).float(),
+                torch.randint(0, 64, (2, 500, 1)).float(),
+                torch.randint(0, 64, (2, 500, 1)).float(),
+                torch.randint(0, 16, (2, 500, 1)).float(),
             ],
             dim=-1,
         )
@@ -147,9 +147,9 @@ class TestCASTModel:
             "hits": torch.cat(
                 [
                     torch.randn(1, 100, 3),
-                    torch.randint(0, 20, (1, 100, 1)).float(),
-                    torch.randint(0, 14, (1, 100, 1)).float(),
-                    torch.randint(0, 2, (1, 100, 1)).float(),
+                    torch.randint(0, 64, (1, 100, 1)).float(),
+                    torch.randint(0, 64, (1, 100, 1)).float(),
+                    torch.randint(0, 16, (1, 100, 1)).float(),
                 ],
                 dim=-1,
             ),
