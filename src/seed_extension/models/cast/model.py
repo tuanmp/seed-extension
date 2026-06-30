@@ -37,7 +37,7 @@ class CASTModel(L.LightningModule):
             dropout=dropout,
         )
         self.seed_embedder = SeedEmbedder(d_model=d_model, dropout=dropout)
-        self.hit_encoder = IdentityEncoder()
+        self.hit_encoder = self._build_hit_encoder(hit_encoder)
         self.cross_attn = CrossAttentionDecoder(
             d_model=d_model,
             n_heads=n_heads,
@@ -51,6 +51,15 @@ class CASTModel(L.LightningModule):
             else None
         )
         self.temperature = temperature
+
+    def _build_hit_encoder(self, encoder_type: str):
+        if encoder_type == "identity":
+            return IdentityEncoder()
+        elif encoder_type == "binned_self_attn":
+            from .encoders import BinnedSelfAttentionEncoder
+            return BinnedSelfAttentionEncoder()
+        else:
+            raise ValueError(f"Unknown hit_encoder: {encoder_type}")
 
     def forward(self, hits, seeds):
         h_emb = self.hit_embedder(hits)
@@ -122,16 +131,84 @@ class CASTModel(L.LightningModule):
         self.log_dict(metrics, on_step=False, on_epoch=True)
         return loss
 
+    def test_step(self, batch, batch_idx):
+        if isinstance(batch, list):
+            sample = batch[0]
+        else:
+            sample = batch
+        hits = sample["hits"]
+        seeds = sample["seeds"]
+        targets = sample["targets"]
+        if hits.dim() == 2:
+            hits = hits.unsqueeze(0)
+        if seeds.dim() == 2:
+            seeds = seeds.unsqueeze(0)
+        if targets.dim() == 2:
+            targets = targets.unsqueeze(0)
+
+        scores = self(hits, seeds)
+        loss = info_nce_loss(scores, targets, temperature=1.0)
+
+        scores_2d = scores.squeeze(0)
+        best_seed = scores_2d.argmax(dim=0)
+        N_s = scores_2d.shape[0]
+        preds = torch.zeros(N_s, scores_2d.shape[1], device=scores.device)
+        preds[best_seed, torch.arange(scores_2d.shape[1])] = 1.0
+
+        targets_2d = targets.squeeze(0)
+        eff = compute_efficiency(preds, targets_2d)
+        pur = compute_purity(preds, targets_2d)
+        metrics = {"test_loss": loss, "test_eff": eff, "test_pur": pur}
+
+        kinematics = sample.get("kinematics")
+        if kinematics is not None and kinematics.numel() > 0:
+            kin = kinematics.squeeze(0) if kinematics.dim() == 3 else kinematics
+            binned = compute_binned_metrics(preds, targets_2d, kin)
+            metrics.update({f"test_{k}": v for k, v in binned.items()})
+
+        self.log_dict(metrics, on_step=False, on_epoch=True)
+        return loss
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.learning_rate,
             weight_decay=self.hparams.weight_decay,
         )
-        max_epochs = self.trainer.max_epochs if self._trainer is not None else 50
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=max_epochs
-        )
+        try:
+            max_epochs = self.trainer.max_epochs
+        except RuntimeError:
+            max_epochs = 50
+        warmup = self.hparams.warmup_steps
+        lr_scheduler_cfg = self.hparams.lr_scheduler
+
+        if warmup > 0:
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=0.01, total_iters=warmup,
+            )
+        else:
+            warmup_scheduler = None
+
+        if lr_scheduler_cfg == "cosine":
+            main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=max_epochs,
+            )
+        elif lr_scheduler_cfg == "plateau":
+            main_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", patience=5,
+            )
+        else:
+            raise ValueError(f"Unknown lr_scheduler: {lr_scheduler_cfg}")
+
+        if warmup_scheduler is not None:
+            scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, main_scheduler],
+                milestones=[warmup],
+            )
+        else:
+            scheduler = main_scheduler
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {

@@ -24,3 +24,4 @@ packages = ["src/ml_cookbook", "src/seed_extension"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "-q"
+markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
