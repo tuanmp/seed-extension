@@ -1,0 +1,45 @@
+experiment_name: cast_baseline
+seed: 42
+
+data:
+  process: ttbar
+  pileup: pu200
+  max_train_events: 50000
+  max_val_events: 5000
+  max_test_events: 5000
+  num_workers: 8
+  target_vertices: 200
+  seed_strategy: random_consecutive
+  seed_n_samples_val: 1
+  min_track_hits: 5
+  primary_only: false
+  predict_seed_hits: false
+  use_detector_features: true
+  normalize_coords: true
+
+model:
+  type: cast
+  d_model: 256
+  n_cross_attn_layers: 3
+  n_heads: 8
+  ff_dim: 1024
+  dropout: 0.1
+  temperature: 0.1
+  fourier_L: 8
+  use_cylindrical_pe: true
+  use_seed_self_attn: true
+  hit_encoder: identity
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  lr_scheduler: cosine
+  warmup_steps: 1000
+
+trainer:
+  max_epochs: 50
+  accelerator: auto
+  devices: 1
+  precision: bf16-mixed
+  deterministic: true
+  accumulate_grad_batches: 4
+  gradient_clip_val: 1.0
+  log_every_n_steps: 1
