@@ -15,7 +15,7 @@ from lightning.pytorch.callbacks import (
 )
 from lightning.pytorch.loggers import CSVLogger
 
-from ml_cookbook.utils.repro import seed_everything
+from seed_extension.utils.repro import seed_everything
 from colliderml_dataloader import ColliderMLDataModule
 
 import seed_extension.data  # noqa: F401 — monkey-patches feature lists
