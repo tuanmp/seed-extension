@@ -51,9 +51,19 @@ Controlled by `data.seed_strategy` (`"random_consecutive"` or `"fixed_innermost"
 | `targets` | (N_s, N_h) | Sparse binary matrix: 1 if seed and hit share particle_id |
 | `particle_kinematics` | (N_s, 6) | η, pT, d0, z0, θ, φ per seed (for metric binning) |
 
-### 3.5 Implementation
+### 3.5 Pileup Subsampling
 
-Subclass `ColliderMLDataset`, override `_process_event(hits_raw, parts_raw, event_idx)`. Must extend `TRACKER_HIT_FEATURES` in colliderml-dataloader to include `layer_id`, `volume_id`, `detector`.
+The ColliderML library provides `colliderml.physics.pileup.subsample_pileup()`, which physically removes pileup by filtering particles and hits to keep only those from vertices with `vertex_primary <= target_vertices`. This provides:
+
+- **Complexity knob**: Start training at low pileup (easy), scale up.
+- **Performance study**: Measure efficiency vs. pileup level — how robust is the model to event density?
+- **Memory reduction**: Fewer pileup vertices → fewer hits → less GPU memory.
+
+Applied at dataset load time before seed construction. Controlled by `data.target_vertices` (default: 200 = full pu200).
+
+### 3.6 Implementation
+
+Subclass `ColliderMLDataset`, override `_process_event(hits_raw, parts_raw, event_idx)`. Must extend `TRACKER_HIT_FEATURES` in colliderml-dataloader to include `layer_id`, `volume_id`, `detector`. Apply `subsample_pileup()` before seed construction when `target_vertices < 200`.
 
 ## 4. Model Architecture
 
@@ -157,6 +167,7 @@ All efficiency metrics computed in bins of:
 | pT (transverse momentum, GeV) | [0, 1, 2, 5, 10, 20, 50, 100] |
 | d0 (transverse impact parameter, mm) | [0, 0.1, 0.5, 1.0, 5.0, 10.0] |
 | z0 (longitudinal impact parameter, mm) | [0, 0.5, 1.0, 5.0, 10.0, 20.0] |
+| N_vertices (pileup level) | [1, 10, 50, 100, 150, 200] |
 
 For each bin: mean ± std across events. Global standard deviation of each metric also logged.
 
@@ -179,6 +190,7 @@ data:
   max_val_events: 5000
   max_test_events: 5000
   num_workers: 8
+  target_vertices: 200            # 1=hard scatter only, 200=full pu200
   seed_strategy: random_consecutive
   seed_n_samples_val: 1
   min_track_hits: 5
@@ -255,6 +267,13 @@ tests/
 | FlashAttention | If A100/H100 available | ~5-10× memory, ~2× speed |
 | LSH-bucketed cross-attention | If 80GB still OOMs | O(N_s × N_bucket) vs O(N_s × N_h) |
 | Coarse→fine two-level attention | Production scaling | 10-100× for coarse stage |
+
+### 8.1 Pileup Scaling Study
+
+The `target_vertices` parameter enables systematic study of model robustness:
+- Train on a fixed pileup level, test on varied levels → measures generalization
+- Train on increasing pileup → measures learning difficulty vs. event density
+- Low pileup (target_vertices=1) hits-only ≈ 15-30k hits/event — fast iteration for debugging
 
 ## 9. Implementation Order
 
