@@ -92,6 +92,12 @@ class HitEmbedder(nn.Module):
 
 
 class SeedEmbedder(nn.Module):
+    """Encodes seed triplets (3 hits x 3 coords = 9 dims) into embeddings.
+
+    Coordinates are normalized to [0,1] using the same detector bounds
+    as HitEmbedder before the MLP.
+    """
+
     def __init__(self, d_model: int = 256, dropout: float = 0.1):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -104,4 +110,16 @@ class SeedEmbedder(nn.Module):
         )
 
     def forward(self, seeds: torch.Tensor) -> torch.Tensor:
+        seeds = self._normalize_coords(seeds)
         return self.mlp(seeds)
+
+    @staticmethod
+    def _normalize_coords(seeds: torch.Tensor) -> torch.Tensor:
+        x = seeds[..., 0::3] / 1100.0 * 0.5 + 0.5
+        y = seeds[..., 1::3] / 1100.0 * 0.5 + 0.5
+        z = seeds[..., 2::3] / 3000.0 * 0.5 + 0.5
+        out = torch.empty_like(seeds)
+        out[..., 0::3] = x.clamp(0.0, 1.0)
+        out[..., 1::3] = y.clamp(0.0, 1.0)
+        out[..., 2::3] = z.clamp(0.0, 1.0)
+        return out
