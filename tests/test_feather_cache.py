@@ -13,14 +13,9 @@ import pytest
 
 from colliderml_dataloader import ColliderMLDataModule
 from colliderml.polars import explode_tracker_hits, explode_particles
-from colliderml_dataloader.shard_index import (
-    TRACKER_HIT_FEATURES,
-    PARTICLE_FEATURES,
-    shard_dir_for,
-    build_shard_index,
-)
+from colliderml_dataloader.shard_index import shard_dir_for, build_shard_index
 
-import seed_extension.data  # noqa: F401 — monkey-patch feature lists
+from seed_extension.data.seed_utils import PARTICLE_FEATURES, TRACKER_HIT_FEATURES
 from seed_extension.data.dataset import SeedExtensionDataset
 from seed_extension.data.cache import CachedColliderMLDataset, CachedColliderMLDataModule
 

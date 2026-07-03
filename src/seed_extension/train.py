@@ -17,7 +17,7 @@ from lightning.pytorch.loggers import CSVLogger
 
 from seed_extension.utils.repro import seed_everything
 
-import seed_extension.data  # noqa: F401 — monkey-patches feature lists
+import seed_extension.data  # noqa: F401 — registers feature lists
 from seed_extension.models.cast.model import CASTModel
 
 

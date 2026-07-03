@@ -1,164 +1,31 @@
 """SeedExtensionDataset — CAST seed-extension data processing."""
 
+from __future__ import annotations
+
 from typing import Any
 
 import numpy as np
+import polars as pl
 import torch
 
 from colliderml_dataloader.dataset import ColliderMLDataset
+from colliderml.polars import explode_particles, explode_tracker_hits
 
-
-def compute_kinematics(
-    px: np.ndarray, py: np.ndarray, pz: np.ndarray,
-    d0: np.ndarray, z0: np.ndarray,
-) -> np.ndarray:
-    """Compute particle kinematics: [eta, pT, d0, z0, theta, phi].
-
-    Returns array of shape (N, 6).
-    """
-    pT = np.sqrt(px**2 + py**2)
-    p = np.sqrt(pT**2 + pz**2)
-    # eta = arsinh(pz / pT).  Use this form which is stable for all pT > 0.
-    # When pT == 0, eta is sign(pz) * inf; we clip to a large finite value.
-    eta = np.where(
-        pT > 1e-9,
-        np.arcsinh(pz / np.clip(pT, 1e-9, None)),
-        np.sign(pz) * 10.0,
-    )
-    theta = np.arctan2(pT, pz)
-    phi = np.arctan2(py, px)
-    return np.stack([eta, pT, d0, z0, theta, phi], axis=1)
-
-
-def build_seeds_fixed(
-    part_df: "pd.DataFrame", hit_df: "pd.DataFrame", n_seed_hits: int = 3,  # noqa: F821
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build seeds using the innermost (lowest layer_id) hits per particle.
-
-    Uses polars group-by aggregation instead of pandas iterrows.
-    Returns (seed_coords, seed_pids, kinematics).
-    """
-    import polars as pl
-
-    h_pl = pl.from_pandas(hit_df)
-    p_pl = pl.from_pandas(part_df)
-
-    joined = (
-        h_pl
-        .join(
-            p_pl.select(["particle_id", "px", "py", "pz", "perigee_d0", "perigee_z0"]),
-            on="particle_id", how="inner",
-        )
-        .sort(["particle_id", "layer_id"])
-        .group_by("particle_id", maintain_order=True)
-        .agg([
-            pl.col("x", "y", "z"),
-            pl.col("px", "py", "pz", "perigee_d0", "perigee_z0").first(),
-        ])
-        .filter(pl.col("x").list.len() >= n_seed_hits)
-    )
-
-    N = len(joined)
-    if N == 0:
-        return (
-            np.empty((0, n_seed_hits * 3), dtype=np.float32),
-            np.empty((0,), dtype=np.int64),
-            np.empty((0, 6), dtype=np.float32),
-        )
-
-    xl, yl, zl = joined["x"].to_list(), joined["y"].to_list(), joined["z"].to_list()
-    coords = np.empty((N, n_seed_hits * 3), dtype=np.float32)
-    for k in range(n_seed_hits):
-        coords[:, k * 3] = np.array([v[k] for v in xl], dtype=np.float32)
-        coords[:, k * 3 + 1] = np.array([v[k] for v in yl], dtype=np.float32)
-        coords[:, k * 3 + 2] = np.array([v[k] for v in zl], dtype=np.float32)
-
-    px = joined["px"].to_numpy().astype(np.float64)
-    py = joined["py"].to_numpy().astype(np.float64)
-    pz = joined["pz"].to_numpy().astype(np.float64)
-    d0 = joined["perigee_d0"].to_numpy().astype(np.float64)
-    z0 = joined["perigee_z0"].to_numpy().astype(np.float64)
-    kinematics = compute_kinematics(px, py, pz, d0, z0).astype(np.float32)
-    pids = joined["particle_id"].to_numpy().astype(np.int64)
-
-    return coords, pids, kinematics
-
-
-def build_seeds_random_consecutive(
-    part_df: "pd.DataFrame", hit_df: "pd.DataFrame",  # noqa: F821
-    n_seed_hits: int = 3,
-    rng: np.random.RandomState | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build seeds from randomly-chosen consecutive-layer hit groups.
-
-    Uses polars group-by for the grouping, then numpy for per-particle
-    consecutive-layer logic and random selection.
-    """
-    import polars as pl
-
-    if rng is None:
-        rng = np.random.RandomState(0)
-
-    h_pl = pl.from_pandas(hit_df)
-    p_pl = pl.from_pandas(part_df)
-
-    joined = (
-        h_pl
-        .join(
-            p_pl.select(["particle_id", "px", "py", "pz", "perigee_d0", "perigee_z0"]),
-            on="particle_id", how="inner",
-        )
-        .sort(["particle_id", "layer_id"])
-        .group_by("particle_id", maintain_order=True)
-        .agg([
-            pl.col("x", "y", "z", "layer_id"),
-            pl.col("px", "py", "pz", "perigee_d0", "perigee_z0").first(),
-        ])
-        .filter(pl.col("x").list.len() >= n_seed_hits)
-    )
-
-    N = len(joined)
-    if N == 0:
-        return (
-            np.empty((0, n_seed_hits * 3), dtype=np.float32),
-            np.empty((0,), dtype=np.int64),
-            np.empty((0, 6), dtype=np.float32),
-        )
-
-    coords = np.empty((N, n_seed_hits * 3), dtype=np.float32)
-    for i in range(N):
-        x = np.array(joined["x"][i].to_list(), dtype=np.float32)
-        y = np.array(joined["y"][i].to_list(), dtype=np.float32)
-        z = np.array(joined["z"][i].to_list(), dtype=np.float32)
-        layers = np.array(joined["layer_id"][i].to_list(), dtype=np.int32)
-
-        # Find consecutive groups
-        starts = []
-        for s in range(len(layers) - n_seed_hits + 1):
-            if np.all(np.diff(layers[s:s + n_seed_hits]) == 1):
-                starts.append(s)
-
-        start = int(rng.choice(starts)) if starts else 0
-        for k in range(n_seed_hits):
-            coords[i, k * 3] = x[start + k]
-            coords[i, k * 3 + 1] = y[start + k]
-            coords[i, k * 3 + 2] = z[start + k]
-
-    px = joined["px"].to_numpy().astype(np.float64)
-    py = joined["py"].to_numpy().astype(np.float64)
-    pz = joined["pz"].to_numpy().astype(np.float64)
-    d0 = joined["perigee_d0"].to_numpy().astype(np.float64)
-    z0 = joined["perigee_z0"].to_numpy().astype(np.float64)
-    kinematics = compute_kinematics(px, py, pz, d0, z0).astype(np.float32)
-    pids = joined["particle_id"].to_numpy().astype(np.int64)
-
-    return coords, pids, kinematics
+from seed_extension.data.seed_utils import (
+    PARTICLE_FEATURES,
+    TRACKER_HIT_FEATURES,
+    build_seeds_fixed,
+    build_seeds_random_consecutive,
+    compute_pT_eta,
+)
 
 
 class SeedExtensionDataset(ColliderMLDataset):
     """CAST seed-extension dataset — seed construction, target matrices, kinematics."""
 
-    def __init__(self, *args, **kwargs):
+    _HIT_FEATURE_COLS = ["x", "y", "z", "layer_id", "volume_id", "detector"]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Disable the unbounded per-worker _raw_cache inherited from
         # ColliderMLDataset.  At 50k events each cached entry is ~20 MB
@@ -168,12 +35,32 @@ class SeedExtensionDataset(ColliderMLDataset):
         # can be absorbed by DataLoader pre-fetching.
         self._raw_cache = {}
 
-    def __getitem__(self, idx):
-        # Bypass parent's caching — always load from Parquet.
-        # Kernel page cache amortises disk I/O after epoch 0.
+    # ------------------------------------------------------------------
+    # I/O — overridden to use seed_extension feature lists
+    # ------------------------------------------------------------------
+
+    def __getitem__(self, idx: int):
         event_id = self.event_ids[idx]
         hits_raw, parts_raw = self._load_event(event_id)
         return self._process_event(hits_raw, parts_raw, idx)
+
+    def _load_event(self, event_id: int):
+        """Override parent — uses seed_extension feature lists."""
+        hit_file = self.hit_file_map[event_id]
+        hits_raw = explode_tracker_hits(
+            pl.scan_parquet(hit_file)
+            .filter(pl.col("event_id") == event_id)
+            .select(TRACKER_HIT_FEATURES)
+            .collect()
+        )
+        part_file = self.part_file_map[event_id]
+        parts_raw = explode_particles(
+            pl.scan_parquet(part_file)
+            .filter(pl.col("event_id") == event_id)
+            .select(PARTICLE_FEATURES)
+            .collect()
+        )
+        return hits_raw, parts_raw
 
     # ------------------------------------------------------------------
     # Public entry
@@ -206,7 +93,7 @@ class SeedExtensionDataset(ColliderMLDataset):
             part_df, hit_df, seed_strategy, n_seed_hits, event_idx,
         )
 
-        hit_features, hit_pids = self._build_hit_features(hit_df, n_seed_hits)
+        hit_features, hit_pids = self._build_hit_features(hit_df)
 
         return self._assemble_sample(
             hit_features, hit_pids, seed_coords, seed_pids,
@@ -222,7 +109,6 @@ class SeedExtensionDataset(ColliderMLDataset):
         part_df: "pd.DataFrame", hit_df: "pd.DataFrame",  # noqa: F821
         target_vertices: int, event_idx: int,
     ) -> tuple:
-        """Keep a random subset of vertices, discarding all others."""
         all_vertices = np.unique(part_df["vertex_primary"].values)
         n_available = len(all_vertices)
 
@@ -249,23 +135,21 @@ class SeedExtensionDataset(ColliderMLDataset):
         if primary_only:
             part_df = part_df[part_df["primary"] == 1]
 
-        # Kinematic cuts — compute kinematics once for filtering
+        # Use compute_pT_eta (cheaper than full kinematics).
         if min_pT > 0.0 or max_abs_eta < 10.0:
-            kin = compute_kinematics(
+            pT, eta = compute_pT_eta(
                 part_df["px"].values, part_df["py"].values,
-                part_df["pz"].values, part_df["perigee_d0"].values,
-                part_df["perigee_z0"].values,
+                part_df["pz"].values,
             )
-            eta = kin[:, 0]
-            pT = kin[:, 1]
-            eta_mask = (np.abs(eta) <= max_abs_eta)
-            pT_mask = (pT >= min_pT)
-            part_df = part_df[eta_mask & pT_mask]
+            part_df = part_df[(eta >= -max_abs_eta) & (eta <= max_abs_eta) & (pT >= min_pT)]
 
-        # Min hits per particle
+        # Min hits per particle.
         hit_counts = hit_df.groupby("particle_id").size()
         valid_pids = hit_counts[hit_counts >= min_track_hits].index
         part_df = part_df[part_df["particle_id"].isin(valid_pids)].reset_index(drop=True)
+        # Filter hits to surviving particles only.
+        kept_pids = part_df["particle_id"].unique()
+        hit_df = hit_df[hit_df["particle_id"].isin(kept_pids)]
         return part_df, hit_df
 
     # ------------------------------------------------------------------
@@ -288,11 +172,9 @@ class SeedExtensionDataset(ColliderMLDataset):
     # Step 4: hit feature tensor
     # ------------------------------------------------------------------
 
-    _HIT_FEATURE_COLS = ["x", "y", "z", "layer_id", "volume_id", "detector"]
-
     @staticmethod
     def _build_hit_features(
-        hit_df: "pd.DataFrame", n_seed_hits: int,  # noqa: F821
+        hit_df: "pd.DataFrame",  # noqa: F821
     ) -> tuple[np.ndarray, np.ndarray]:
         features = hit_df[SeedExtensionDataset._HIT_FEATURE_COLS].to_numpy(dtype=np.float32)
         pids = hit_df["particle_id"].to_numpy(dtype=np.int64)
@@ -341,28 +223,24 @@ class SeedExtensionDataset(ColliderMLDataset):
             "event_idx": event_idx,
         }
 
+    # ------------------------------------------------------------------
+    # Mask seed hit positions from the target matrix.
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _mask_seed_hits(
         targets: np.ndarray, seed_coords: np.ndarray, hit_features: np.ndarray,
     ) -> np.ndarray:
-        hit_xy = hit_features[:, :3]
-        expected_zero = len(seed_coords) * 3
-        zeroed = 0
-        for s, sc in enumerate(seed_coords):
-            for k in range(3):
-                sx, sy, sz = sc[k*3], sc[k*3+1], sc[k*3+2]
-                dist = np.sqrt(
-                    (hit_xy[:, 0] - sx)**2 +
-                    (hit_xy[:, 1] - sy)**2 +
-                    (hit_xy[:, 2] - sz)**2
-                )
-                closest = np.argmin(dist)
-                if dist[closest] < 1e-4:
-                    targets[s, closest] = 0.0
-                    zeroed += 1
-        if zeroed < expected_zero:
-            print(
-                f"WARNING: Only {zeroed}/{expected_zero} seed hits matched for exclusion. "
-                f"Some seed hits may remain in targets."
-            )
+        hit_xyz = hit_features[:, :3]
+        n_seed_hits = seed_coords.shape[1] // 3
+
+        for k in range(n_seed_hits):
+            sx = seed_coords[:, [k * 3, k * 3 + 1, k * 3 + 2]]  # (N_s, 3)
+            diff = sx[:, None, :] - hit_xyz[None, :, :]           # (N_s, N_h, 3)
+            dist = np.sqrt(np.sum(diff * diff, axis=-1))          # (N_s, N_h)
+            closest = dist.argmin(axis=1)
+            matched = np.where(np.min(dist, axis=1) < 1e-4)[0]
+            for s in matched:
+                targets[s, closest[s]] = 0.0
+
         return targets

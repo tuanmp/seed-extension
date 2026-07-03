@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader, default_collate
 from colliderml_dataloader import ColliderMLDataModule
 
 from seed_extension.data.dataset import SeedExtensionDataset
+from seed_extension.data.seed_utils import PARTICLE_FEATURES, TRACKER_HIT_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +51,13 @@ class CachedColliderMLDataset(SeedExtensionDataset):
         # indices and scan files, which is unnecessary for feather I/O.
         # We only depend on SeedExtensionDataset._process_event and its
         # helper methods, which require: self.event_ids, self.stage,
-        # self._kwargs, self._raw_cache.
+        # self._kwargs.
         self.cache_root = Path(cache_root)
         self.hits_dir = self.cache_root / "hits"
         self.parts_dir = self.cache_root / "parts"
         self.event_ids = list(event_ids)
         self.stage = stage
         self._kwargs = kwargs
-        self._raw_cache = {}   # disabled — feather reads are fast enough
 
     def __len__(self) -> int:
         return len(self.event_ids)
@@ -72,18 +72,8 @@ class CachedColliderMLDataset(SeedExtensionDataset):
 class CachedColliderMLDataModule(L.LightningDataModule):
     """Lightning DataModule that reads from a pre-built feather cache.
 
-    This replaces the Parquet-scanning ``setup()`` of ColliderMLDataModule
-    with a cache-scanning version.  If the cache is missing or incomplete,
-    it falls back to the parent-class behaviour (Parquet).
-
-    Parameters
-    ----------
-    data_dir : str
-        Source ColliderML root (used for fallback only).
-    cache_dir : str | None
-        Root of the feather cache.  If None, delegates entirely to
-        ColliderMLDataModule.
-    All other parameters are forwarded to ColliderMLDataModule.
+    If the cache is missing or ``cache_dir`` is ``None``, it transparently
+    delegates to :class:`ColliderMLDataModule` (Parquet path).
     """
 
     def __init__(
@@ -102,8 +92,8 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         **dataset_kwargs: Any,
     ) -> None:
         super().__init__()
-        dataset_kwargs = dict(dataset_kwargs)
-        dataset_kwargs.setdefault("dataset_cls", SeedExtensionDataset)
+        kwargs = dict(dataset_kwargs)
+        kwargs.setdefault("dataset_cls", SeedExtensionDataset)
         self._parent = ColliderMLDataModule(
             data_dir=data_dir,
             process=process,
@@ -113,7 +103,7 @@ class CachedColliderMLDataModule(L.LightningDataModule):
             max_test_events=max_test_events,
             batch_size=batch_size,
             num_workers=num_workers,
-            **dataset_kwargs,
+            **kwargs,
         )
         self.cache_dir = cache_dir
         self.prefetch_factor = prefetch_factor
@@ -129,14 +119,13 @@ class CachedColliderMLDataModule(L.LightningDataModule):
     def _cache_exists(self) -> bool:
         if self.cache_dir is None:
             return False
-        meta = Path(self.cache_dir) / "meta.json"
-        return meta.exists()
+        return Path(self.cache_dir, "meta.json").exists()
 
     def setup(self, stage: str | None = None) -> None:
         if self.cache_dir is None or not self._cache_exists():
             if self.cache_dir is not None:
                 rank_zero_warn(
-                    f"Feather cache not found at {self.cache_dir}, falling back to Parquet.",
+                    f"Feather cache not found at {self.cache_dir}, falling back to Parquet."
                 )
             self._parent.setup(stage)
             self.trainset = self._parent.trainset
@@ -152,15 +141,15 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         with (cache_root / "meta.json").open("r") as fh:
             meta = json.load(fh)
 
-        import colliderml_dataloader.shard_index as _si
         cached_hit_cols = meta.get("hit_cols", [])
         cached_part_cols = meta.get("part_cols", [])
-        if cached_hit_cols != _si.TRACKER_HIT_FEATURES or cached_part_cols != _si.PARTICLE_FEATURES:
+        if cached_hit_cols != TRACKER_HIT_FEATURES or cached_part_cols != PARTICLE_FEATURES:
             raise RuntimeError(
                 "Cached column lists do not match current feature lists. "
-                f"Rebuild the cache or adjust TRACKER_HIT_FEATURES / PARTICLE_FEATURES.\n"
+                "Rebuild the cache or adjust seed_extension.data.seed_utils "
+                "TRACKER_HIT_FEATURES / PARTICLE_FEATURES.\n"
                 f"  Cache: hits={cached_hit_cols}  parts={cached_part_cols}\n"
-                f"  Current: hits={_si.TRACKER_HIT_FEATURES}  parts={_si.PARTICLE_FEATURES}"
+                f"  Current: hits={TRACKER_HIT_FEATURES}  parts={PARTICLE_FEATURES}"
             )
 
         hits_dir = cache_root / "hits"
@@ -169,10 +158,15 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         part_ids = {int(p.stem) for p in parts_dir.glob("*.feather")}
         all_event_ids = sorted(hit_ids & part_ids)
 
-        total_needed = self._parent.max_train_events + self._parent.max_val_events + self._parent.max_test_events
+        total_needed = (
+            self._parent.max_train_events
+            + self._parent.max_val_events
+            + self._parent.max_test_events
+        )
         if len(all_event_ids) < total_needed:
             rank_zero_warn(
-                f"Feather cache has {len(all_event_ids)} events but {total_needed} requested — using all available.",
+                f"Feather cache has {len(all_event_ids)} events "
+                f"but {total_needed} requested — using all available."
             )
             total_needed = len(all_event_ids)
 
@@ -203,49 +197,42 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         self.test_dataset = self.testset
 
         rank_zero_info(
-            f"Loaded feather cache from {cache_root} — {len(train_ids)} train / {len(val_ids)} val / {len(test_ids)} test events.",
+            f"Loaded feather cache from {cache_root} — "
+            f"{len(train_ids)} train / {len(val_ids)} val / {len(test_ids)} test events."
         )
+
+    # ------------------------------------------------------------------
+    # DataLoader helpers
+    # ------------------------------------------------------------------
+
+    def _dataloader_kwargs(self, shuffle: bool = False) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "batch_size": self.batch_size,
+            "shuffle": shuffle,
+            "num_workers": self._parent.num_workers,
+            "collate_fn": default_collate,
+        }
+        if self._parent.num_workers > 0:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+            kwargs["persistent_workers"] = self.persistent_workers
+        return kwargs
 
     def train_dataloader(self):
         return DataLoader(
-            self.trainset, batch_size=self.batch_size,
-            num_workers=self._parent.num_workers, drop_last=True,
-            shuffle=True, collate_fn=default_collate,
-            prefetch_factor=self.prefetch_factor if self._parent.num_workers > 0 else None,
-            persistent_workers=self.persistent_workers and self._parent.num_workers > 0,
+            self.trainset, drop_last=True,
+            **self._dataloader_kwargs(shuffle=True),
         )
 
     def val_dataloader(self):
-        return DataLoader(
-            self.valset, batch_size=self.batch_size,
-            num_workers=self._parent.num_workers, shuffle=False,
-            collate_fn=default_collate,
-            prefetch_factor=self.prefetch_factor if self._parent.num_workers > 0 else None,
-            persistent_workers=self.persistent_workers and self._parent.num_workers > 0,
-        )
+        return DataLoader(self.valset, **self._dataloader_kwargs())
 
     def test_dataloader(self):
-        return DataLoader(
-            self.testset, batch_size=self.batch_size,
-            num_workers=self._parent.num_workers, shuffle=False,
-            collate_fn=default_collate,
-        )
+        return DataLoader(self.testset, **self._dataloader_kwargs())
 
     def predict_dataloader(self):
+        kwargs = self._dataloader_kwargs()
         return [
-            DataLoader(
-                self.trainset, batch_size=self.batch_size,
-                num_workers=self._parent.num_workers, shuffle=False,
-                collate_fn=default_collate,
-            ),
-            DataLoader(
-                self.valset, batch_size=self.batch_size,
-                num_workers=self._parent.num_workers, shuffle=False,
-                collate_fn=default_collate,
-            ),
-            DataLoader(
-                self.testset, batch_size=self.batch_size,
-                num_workers=self._parent.num_workers, shuffle=False,
-                collate_fn=default_collate,
-            ),
+            DataLoader(self.trainset, **kwargs),
+            DataLoader(self.valset, **kwargs),
+            DataLoader(self.testset, **kwargs),
         ]

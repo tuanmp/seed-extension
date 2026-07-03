@@ -24,14 +24,9 @@ from typing import Any
 import polars as pl
 import pyarrow.feather as feather
 from colliderml.polars import explode_particles, explode_tracker_hits
-from colliderml_dataloader.shard_index import (
-    PARTICLE_FEATURES,
-    TRACKER_HIT_FEATURES,
-    build_shard_index,
-    shard_dir_for,
-)
+from colliderml_dataloader.shard_index import build_shard_index, shard_dir_for
 
-import seed_extension.data  # noqa: F401 — monkey-patch feature lists
+from seed_extension.data.seed_utils import PARTICLE_FEATURES, TRACKER_HIT_FEATURES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)

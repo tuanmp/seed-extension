@@ -1,13 +1,24 @@
-"""Seed extension data modules — CAST dataset and utilities."""
+"""Seed extension data modules — CAST dataset, seed utilities, and feather cache."""
 
-import colliderml_dataloader.shard_index as _si
+from seed_extension.data.seed_utils import (
+    PARTICLE_FEATURES,
+    TRACKER_HIT_FEATURES,
+    build_seeds_fixed,
+    build_seeds_random_consecutive,
+    compute_kinematics,
+    compute_pT_eta,
+)
+from seed_extension.data.dataset import SeedExtensionDataset
+from seed_extension.data.cache import CachedColliderMLDataset, CachedColliderMLDataModule
 
-# Extend feature lists in-place so ColliderMLDataset loads extra columns.
-_si.TRACKER_HIT_FEATURES[:] = [
-    "x", "y", "z", "particle_id", "event_id",
-    "layer_id", "volume_id", "detector",
-]
-_si.PARTICLE_FEATURES[:] = [
-    "particle_id", "px", "py", "pz", "primary", "pdg_id", "event_id",
-    "perigee_d0", "perigee_z0", "vertex_primary",
+__all__ = [
+    "PARTICLE_FEATURES",
+    "TRACKER_HIT_FEATURES",
+    "SeedExtensionDataset",
+    "CachedColliderMLDataset",
+    "CachedColliderMLDataModule",
+    "build_seeds_fixed",
+    "build_seeds_random_consecutive",
+    "compute_kinematics",
+    "compute_pT_eta",
 ]
