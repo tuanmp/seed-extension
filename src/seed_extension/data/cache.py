@@ -100,6 +100,7 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         **dataset_kwargs: Any,
     ) -> None:
         super().__init__()
+        dataset_kwargs = dict(dataset_kwargs)
         dataset_kwargs.setdefault("dataset_cls", SeedExtensionDataset)
         self._parent = ColliderMLDataModule(
             data_dir=data_dir,
@@ -135,8 +136,11 @@ class CachedColliderMLDataModule(L.LightningDataModule):
                 )
             self._parent.setup(stage)
             self.trainset = self._parent.trainset
+            self.train_dataset = self.trainset
             self.valset = self._parent.valset
+            self.val_dataset = self.valset
             self.testset = self._parent.testset
+            self.test_dataset = self.testset
             return
 
         cache_root = Path(self.cache_dir)

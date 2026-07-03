@@ -7,7 +7,6 @@ import shutil
 from pathlib import Path
 
 import polars as pl
-import pyarrow as pa
 import pyarrow.feather as feather
 import torch
 import pytest
@@ -42,8 +41,11 @@ requires_data = pytest.mark.skipif(
 )
 
 
-def build_mini_cache(n_events: int = 2) -> Path:
-    """Build a tiny feather cache with *n_events* events and return cache_root."""
+def build_mini_cache(n_events: int = 2) -> tuple[Path, list[int]]:
+    """Build a tiny feather cache with *n_events* events.
+
+    Returns ``(cache_root, event_ids)`` — the actual event IDs written.
+    """
     cache_root = Path(tempfile.mkdtemp(prefix="feather_cache_test_"))
     hits_dir = cache_root / "hits"
     parts_dir = cache_root / "parts"
@@ -77,10 +79,10 @@ def build_mini_cache(n_events: int = 2) -> Path:
         parts_expl = explode_particles(parts_raw).drop(columns=["event_id"])
 
         feather.write_feather(
-            pa.Table.from_pandas(hits_expl), hits_dir / f"{eid}.feather", compression="zstd",
+            hits_expl, hits_dir / f"{eid}.feather", compression="zstd",
         )
         feather.write_feather(
-            pa.Table.from_pandas(parts_expl), parts_dir / f"{eid}.feather", compression="zstd",
+            parts_expl, parts_dir / f"{eid}.feather", compression="zstd",
         )
 
     meta = {
@@ -94,7 +96,7 @@ def build_mini_cache(n_events: int = 2) -> Path:
     with (cache_root / "meta.json").open("w") as f:
         json.dump(meta, f)
 
-    return cache_root
+    return cache_root, event_ids
 
 
 # ---------------------------------------------------------------------------
@@ -104,93 +106,96 @@ def build_mini_cache(n_events: int = 2) -> Path:
 class TestCachedDataset:
     @requires_data
     def test_returns_same_keys_as_seed_extension(self):
-        cache_root = build_mini_cache(2)
-        cached_ds = CachedColliderMLDataset(
-            cache_root=cache_root,
-            event_ids=[0, 1],
-            stage="fit",
-            min_track_hits=5,
-            seed_strategy="fixed_innermost",
-            target_vertices=200,
-            primary_only=False,
-            predict_seed_hits=True,
-        )
-        sample = cached_ds[0]
-        expected_keys = {
-            "hits", "seeds", "targets", "seed_particle_ids",
-            "hit_particle_ids", "kinematics", "event_idx",
-        }
-        assert set(sample.keys()) == expected_keys
+        cache_root, event_ids = build_mini_cache(2)
+        try:
+            cached_ds = CachedColliderMLDataset(
+                cache_root=cache_root,
+                event_ids=event_ids,
+                stage="fit",
+                min_track_hits=5,
+                seed_strategy="fixed_innermost",
+                target_vertices=200,
+                primary_only=False,
+                predict_seed_hits=True,
+            )
+            sample = cached_ds[0]
+            expected_keys = {
+                "hits", "seeds", "targets", "seed_particle_ids",
+                "hit_particle_ids", "kinematics", "event_idx",
+            }
+            assert set(sample.keys()) == expected_keys
 
-        hits = sample["hits"]
-        seeds = sample["seeds"]
-        targets = sample["targets"]
-        assert hits.ndim == 2, f"hits shape: {hits.shape}"
-        assert seeds.ndim == 2, f"seeds shape: {seeds.shape}"
-        assert targets.ndim == 2, f"targets shape: {targets.shape}"
-        N_s, N_h = seeds.shape[0], hits.shape[0]
-        assert targets.shape == (N_s, N_h)
-
-        shutil.rmtree(cache_root)
+            hits = sample["hits"]
+            seeds = sample["seeds"]
+            targets = sample["targets"]
+            assert hits.ndim == 2, f"hits shape: {hits.shape}"
+            assert seeds.ndim == 2, f"seeds shape: {seeds.shape}"
+            assert targets.ndim == 2, f"targets shape: {targets.shape}"
+            N_s, N_h = seeds.shape[0], hits.shape[0]
+            assert targets.shape == (N_s, N_h)
+        finally:
+            shutil.rmtree(cache_root)
 
     @requires_data
     def test_same_output_as_seed_extension(self):
         """Cached dataset must produce identical output to SeedExtensionDataset
         when run on the same event with same seed/rand config."""
-        cache_root = build_mini_cache(1)
-
-        # Ensure deterministic seed building (fixed_innermost, same event_idx).
-        cached_ds = CachedColliderMLDataset(
-            cache_root=cache_root, event_ids=[0], stage="validate",
-            min_track_hits=5, seed_strategy="fixed_innermost",
-            target_vertices=200, primary_only=False, predict_seed_hits=True,
-        )
-        cached_sample = cached_ds[0]
-
-        # Re-read the same event via the Parquet path.
-        dm = ColliderMLDataModule(
-            data_dir=DATA_DIR, process="ttbar", pileup="pu200",
-            max_train_events=1, max_val_events=0, max_test_events=0,
-            batch_size=1, num_workers=0,
-            dataset_cls=SeedExtensionDataset,
-            min_track_hits=5, seed_strategy="fixed_innermost",
-            target_vertices=200, primary_only=False, predict_seed_hits=True,
-        )
-        dm.setup("fit")
-        loader = dm.train_dataloader()
-        pq_sample = next(iter(loader))
-        # Remove batch dim
-        pq_sample = {k: v[0] for k, v in pq_sample.items()}
-
-        for key in cached_sample:
-            assert torch.allclose(cached_sample[key], pq_sample[key]), (
-                f"Mismatch in key='{key}': "
-                f"cached={cached_sample[key].shape} vs pq={pq_sample[key].shape}"
+        cache_root, (eid,) = build_mini_cache(1)
+        try:
+            # Ensure deterministic seed building (fixed_innermost, same event_idx).
+            cached_ds = CachedColliderMLDataset(
+                cache_root=cache_root, event_ids=[eid], stage="validate",
+                min_track_hits=5, seed_strategy="fixed_innermost",
+                target_vertices=200, primary_only=False, predict_seed_hits=True,
             )
+            cached_sample = cached_ds[0]
 
-        shutil.rmtree(cache_root)
+            # Re-read the same event via the Parquet path (same event_id as index 0).
+            dm = ColliderMLDataModule(
+                data_dir=DATA_DIR, process="ttbar", pileup="pu200",
+                max_train_events=1, max_val_events=0, max_test_events=0,
+                batch_size=1, num_workers=0,
+                dataset_cls=SeedExtensionDataset,
+                min_track_hits=5, seed_strategy="fixed_innermost",
+                target_vertices=200, primary_only=False, predict_seed_hits=True,
+            )
+            dm.setup("fit")
+            loader = dm.train_dataloader()
+            pq_sample = next(iter(loader))
+            # Remove batch dim
+            pq_sample = {k: v[0] for k, v in pq_sample.items()}
+
+            for key in cached_sample:
+                assert torch.allclose(cached_sample[key], pq_sample[key]), (
+                    f"Mismatch in key='{key}': "
+                    f"cached={cached_sample[key].shape} vs pq={pq_sample[key].shape}"
+                )
+        finally:
+            shutil.rmtree(cache_root)
 
 
 class TestCachedDataModule:
     @requires_data
     def test_cache_exists_uses_cached_path(self):
-        cache_root = build_mini_cache(2)
-        dm = CachedColliderMLDataModule(
-            data_dir=DATA_DIR, cache_dir=str(cache_root),
-            process="ttbar", pileup="pu200",
-            max_train_events=2, max_val_events=0, max_test_events=0,
-            batch_size=1, num_workers=0,
-            min_track_hits=5, seed_strategy="fixed_innermost",
-            target_vertices=200, primary_only=False, predict_seed_hits=True,
-        )
-        dm.setup("fit")
-        assert len(dm.trainset) == 2
-        assert isinstance(dm.trainset, CachedColliderMLDataset)
+        cache_root, event_ids = build_mini_cache(2)
+        try:
+            dm = CachedColliderMLDataModule(
+                data_dir=DATA_DIR, cache_dir=str(cache_root),
+                process="ttbar", pileup="pu200",
+                max_train_events=2, max_val_events=0, max_test_events=0,
+                batch_size=1, num_workers=0,
+                min_track_hits=5, seed_strategy="fixed_innermost",
+                target_vertices=200, primary_only=False, predict_seed_hits=True,
+            )
+            dm.setup("fit")
+            assert len(dm.trainset) == 2
+            assert isinstance(dm.trainset, CachedColliderMLDataset)
 
-        batch = next(iter(dm.train_dataloader()))
-        assert isinstance(batch, dict)
-        assert "hits" in batch
-        shutil.rmtree(cache_root)
+            batch = next(iter(dm.train_dataloader()))
+            assert isinstance(batch, dict)
+            assert "hits" in batch
+        finally:
+            shutil.rmtree(cache_root)
 
     @requires_data
     def test_cache_missing_falls_back_to_parquet(self):
@@ -224,23 +229,23 @@ class TestCachedDataModule:
 class TestCacheMeta:
     @requires_data
     def test_column_mismatch_raises(self):
-        cache_root = build_mini_cache(1)
+        cache_root, _ = build_mini_cache(1)
+        try:
+            # Corrupt meta.json
+            meta_path = cache_root / "meta.json"
+            mid = json.loads(meta_path.read_text())
+            mid["hit_cols"] = ["x", "wrong_column"]
+            meta_path.write_text(json.dumps(mid))
 
-        # Corrupt meta.json
-        meta_path = cache_root / "meta.json"
-        mid = json.loads(meta_path.read_text())
-        mid["hit_cols"] = ["x", "wrong_column"]
-        meta_path.write_text(json.dumps(mid))
-
-        dm = CachedColliderMLDataModule(
-            data_dir=DATA_DIR, cache_dir=str(cache_root),
-            process="ttbar", pileup="pu200",
-            max_train_events=1, max_val_events=0, max_test_events=0,
-            batch_size=1, num_workers=0,
-            min_track_hits=5, seed_strategy="fixed_innermost",
-            target_vertices=200, primary_only=False, predict_seed_hits=True,
-        )
-        with pytest.raises(RuntimeError, match="Cached column lists"):
-            dm.setup("fit")
-
-        shutil.rmtree(cache_root)
+            dm = CachedColliderMLDataModule(
+                data_dir=DATA_DIR, cache_dir=str(cache_root),
+                process="ttbar", pileup="pu200",
+                max_train_events=1, max_val_events=0, max_test_events=0,
+                batch_size=1, num_workers=0,
+                min_track_hits=5, seed_strategy="fixed_innermost",
+                target_vertices=200, primary_only=False, predict_seed_hits=True,
+            )
+            with pytest.raises(RuntimeError, match="Cached column lists"):
+                dm.setup("fit")
+        finally:
+            shutil.rmtree(cache_root)
