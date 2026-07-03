@@ -35,30 +35,30 @@ def build_seeds_fixed(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build seeds using the innermost (lowest layer_id) hits per particle.
 
+    Uses polars group-by aggregation instead of pandas iterrows.
     Returns (seed_coords, seed_pids, kinematics).
     """
-    import pandas as pd
+    import polars as pl
 
-    seed_coords_list = []
-    seed_pids_list = []
-    kine_list = []
+    h_pl = pl.from_pandas(hit_df)
+    p_pl = pl.from_pandas(part_df)
 
-    for _, row in part_df.iterrows():
-        pid = row["particle_id"]
-        hits = hit_df[hit_df["particle_id"] == pid].sort_values("layer_id")
-        if len(hits) < n_seed_hits:
-            continue
-        innermost = hits.iloc[:n_seed_hits]
-        coords = innermost[["x", "y", "z"]].to_numpy(dtype=np.float32).ravel()
-        seed_coords_list.append(coords)
-        seed_pids_list.append(pid)
-        kine_list.append(compute_kinematics(
-            np.array([row["px"]]), np.array([row["py"]]),
-            np.array([row["pz"]]), np.array([row["perigee_d0"]]),
-            np.array([row["perigee_z0"]]),
-        )[0])
+    joined = (
+        h_pl
+        .join(
+            p_pl.select(["particle_id", "px", "py", "pz", "perigee_d0", "perigee_z0"]),
+            on="particle_id", how="inner",
+        )
+        .sort(["particle_id", "layer_id"])
+        .group_by("particle_id", maintain_order=True)
+        .agg([
+            pl.col("x", "y", "z"),
+            pl.col("px", "py", "pz", "perigee_d0", "perigee_z0").first(),
+        ])
+        .filter(pl.col("x").list.len() >= n_seed_hits)
+    )
 
-    N = len(seed_coords_list)
+    N = len(joined)
     if N == 0:
         return (
             np.empty((0, n_seed_hits * 3), dtype=np.float32),
@@ -66,11 +66,22 @@ def build_seeds_fixed(
             np.empty((0, 6), dtype=np.float32),
         )
 
-    return (
-        np.stack(seed_coords_list).astype(np.float32),
-        np.array(seed_pids_list, dtype=np.int64),
-        np.stack(kine_list).astype(np.float32),
-    )
+    xl, yl, zl = joined["x"].to_list(), joined["y"].to_list(), joined["z"].to_list()
+    coords = np.empty((N, n_seed_hits * 3), dtype=np.float32)
+    for k in range(n_seed_hits):
+        coords[:, k * 3] = np.array([v[k] for v in xl], dtype=np.float32)
+        coords[:, k * 3 + 1] = np.array([v[k] for v in yl], dtype=np.float32)
+        coords[:, k * 3 + 2] = np.array([v[k] for v in zl], dtype=np.float32)
+
+    px = joined["px"].to_numpy().astype(np.float64)
+    py = joined["py"].to_numpy().astype(np.float64)
+    pz = joined["pz"].to_numpy().astype(np.float64)
+    d0 = joined["perigee_d0"].to_numpy().astype(np.float64)
+    z0 = joined["perigee_z0"].to_numpy().astype(np.float64)
+    kinematics = compute_kinematics(px, py, pz, d0, z0).astype(np.float32)
+    pids = joined["particle_id"].to_numpy().astype(np.int64)
+
+    return coords, pids, kinematics
 
 
 def build_seeds_random_consecutive(
@@ -80,52 +91,33 @@ def build_seeds_random_consecutive(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build seeds from randomly-chosen consecutive-layer hit groups.
 
-    For each particle, finds groups of n_seed_hits consecutive-layer hits,
-    randomly picks one group. Falls back to first n_seed_hits if no
-    consecutive group exists.
-
-    Returns (seed_coords, seed_pids, kinematics).
+    Uses polars group-by for the grouping, then numpy for per-particle
+    consecutive-layer logic and random selection.
     """
-    import pandas as pd
+    import polars as pl
 
     if rng is None:
         rng = np.random.RandomState(0)
 
-    seed_coords_list = []
-    seed_pids_list = []
-    kine_list = []
+    h_pl = pl.from_pandas(hit_df)
+    p_pl = pl.from_pandas(part_df)
 
-    for _, row in part_df.iterrows():
-        pid = row["particle_id"]
-        hits = hit_df[hit_df["particle_id"] == pid].sort_values("layer_id")
-        if len(hits) < n_seed_hits:
-            continue
+    joined = (
+        h_pl
+        .join(
+            p_pl.select(["particle_id", "px", "py", "pz", "perigee_d0", "perigee_z0"]),
+            on="particle_id", how="inner",
+        )
+        .sort(["particle_id", "layer_id"])
+        .group_by("particle_id", maintain_order=True)
+        .agg([
+            pl.col("x", "y", "z", "layer_id"),
+            pl.col("px", "py", "pz", "perigee_d0", "perigee_z0").first(),
+        ])
+        .filter(pl.col("x").list.len() >= n_seed_hits)
+    )
 
-        layer_ids = hits["layer_id"].to_numpy()
-        coords_all = hits[["x", "y", "z"]].to_numpy(dtype=np.float32)
-
-        # Find all groups of n_seed_hits consecutive layers.
-        groups = []
-        for i in range(len(layer_ids) - n_seed_hits + 1):
-            window = layer_ids[i:i + n_seed_hits]
-            if np.all(np.diff(window) == 1):
-                groups.append(i)
-
-        if groups:
-            start = int(rng.choice(groups))
-        else:
-            start = 0
-
-        chosen = coords_all[start:start + n_seed_hits]
-        seed_coords_list.append(chosen.ravel())
-        seed_pids_list.append(pid)
-        kine_list.append(compute_kinematics(
-            np.array([row["px"]]), np.array([row["py"]]),
-            np.array([row["pz"]]), np.array([row["perigee_d0"]]),
-            np.array([row["perigee_z0"]]),
-        )[0])
-
-    N = len(seed_coords_list)
+    N = len(joined)
     if N == 0:
         return (
             np.empty((0, n_seed_hits * 3), dtype=np.float32),
@@ -133,11 +125,34 @@ def build_seeds_random_consecutive(
             np.empty((0, 6), dtype=np.float32),
         )
 
-    return (
-        np.stack(seed_coords_list).astype(np.float32),
-        np.array(seed_pids_list, dtype=np.int64),
-        np.stack(kine_list).astype(np.float32),
-    )
+    coords = np.empty((N, n_seed_hits * 3), dtype=np.float32)
+    for i in range(N):
+        x = np.array(joined["x"][i].to_list(), dtype=np.float32)
+        y = np.array(joined["y"][i].to_list(), dtype=np.float32)
+        z = np.array(joined["z"][i].to_list(), dtype=np.float32)
+        layers = np.array(joined["layer_id"][i].to_list(), dtype=np.int32)
+
+        # Find consecutive groups
+        starts = []
+        for s in range(len(layers) - n_seed_hits + 1):
+            if np.all(np.diff(layers[s:s + n_seed_hits]) == 1):
+                starts.append(s)
+
+        start = int(rng.choice(starts)) if starts else 0
+        for k in range(n_seed_hits):
+            coords[i, k * 3] = x[start + k]
+            coords[i, k * 3 + 1] = y[start + k]
+            coords[i, k * 3 + 2] = z[start + k]
+
+    px = joined["px"].to_numpy().astype(np.float64)
+    py = joined["py"].to_numpy().astype(np.float64)
+    pz = joined["pz"].to_numpy().astype(np.float64)
+    d0 = joined["perigee_d0"].to_numpy().astype(np.float64)
+    z0 = joined["perigee_z0"].to_numpy().astype(np.float64)
+    kinematics = compute_kinematics(px, py, pz, d0, z0).astype(np.float32)
+    pids = joined["particle_id"].to_numpy().astype(np.int64)
+
+    return coords, pids, kinematics
 
 
 class SeedExtensionDataset(ColliderMLDataset):
