@@ -78,6 +78,26 @@ def main() -> None:
         predict_seed_hits=data_cfg.get("predict_seed_hits", False),
     )
 
+    # Patch in prefetch_factor and persistent_workers.
+    # ColliderMLDataModule's DataLoader methods don't expose these;
+    # we replace them after the datasets exist (post-setup).
+    prefetch = int(data_cfg.get("prefetch_factor", 2))
+    workers = data_cfg["num_workers"]
+    from torch.utils.data import DataLoader
+
+    _setup_orig = datamodule.setup
+
+    def _setup_patched(stage=None):
+        _setup_orig(stage)
+        dl_kw = dict(batch_size=1, num_workers=workers,
+                     prefetch_factor=prefetch, persistent_workers=True)
+        datamodule.train_dataloader = lambda: DataLoader(
+            datamodule.trainset, shuffle=True, drop_last=True, **dl_kw)
+        datamodule.val_dataloader = lambda: DataLoader(
+            datamodule.valset, shuffle=False, **dl_kw)
+
+    datamodule.setup = _setup_patched
+
     model = CASTModel(
         d_model=int(model_cfg["d_model"]),
         n_cross_attn_layers=int(model_cfg["n_cross_attn_layers"]),
