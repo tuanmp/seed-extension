@@ -12,6 +12,10 @@ def info_nce_loss(scores, targets, temperature=0.1):
     Returns:
         Scalar loss, averaged over batch and seeds that have positives.
     """
+    if scores.numel() == 0:
+        return scores.sum() * 0.0
+    if scores.shape[-1] == 0:
+        return scores.sum() * 0.0
     scaled = scores / temperature
     scaled = scaled - scaled.max(dim=-1, keepdim=True).values
     exp_scores = torch.exp(scaled)

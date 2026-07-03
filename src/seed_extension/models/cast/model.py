@@ -110,6 +110,10 @@ class CASTModel(L.LightningModule):
         loss = info_nce_loss(scores, targets, temperature=1.0)
 
         scores_2d = scores.squeeze(0)
+        if scores_2d.size(0) == 0 or scores_2d.size(1) == 0:
+            self.log("val_loss", loss, on_step=False, on_epoch=True)
+            return loss
+
         best_seed = scores_2d.argmax(dim=0)
         N_s = scores_2d.shape[0]
         preds = torch.zeros(N_s, scores_2d.shape[1], device=scores.device)
@@ -150,6 +154,11 @@ class CASTModel(L.LightningModule):
         loss = info_nce_loss(scores, targets, temperature=1.0)
 
         scores_2d = scores.squeeze(0)
+        self.log("test_loss", loss, on_step=False, on_epoch=True)
+
+        if scores_2d.size(0) == 0 or scores_2d.size(1) == 0:
+            return loss
+
         best_seed = scores_2d.argmax(dim=0)
         N_s = scores_2d.shape[0]
         preds = torch.zeros(N_s, scores_2d.shape[1], device=scores.device)
