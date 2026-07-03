@@ -46,13 +46,18 @@ class CachedColliderMLDataset(SeedExtensionDataset):
         stage: str,
         **kwargs: Any,
     ) -> None:
+        # Skip ColliderMLDataset.__init__ — it would build Parquet shard
+        # indices and scan files, which is unnecessary for feather I/O.
+        # We only depend on SeedExtensionDataset._process_event and its
+        # helper methods, which require: self.event_ids, self.stage,
+        # self._kwargs, self._raw_cache.
         self.cache_root = Path(cache_root)
         self.hits_dir = self.cache_root / "hits"
         self.parts_dir = self.cache_root / "parts"
         self.event_ids = list(event_ids)
         self.stage = stage
         self._kwargs = kwargs
-        self._raw_cache = {}   # disabled — see notes below
+        self._raw_cache = {}   # disabled — feather reads are fast enough
 
     def __len__(self) -> int:
         return len(self.event_ids)
