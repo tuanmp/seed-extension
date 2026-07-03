@@ -158,6 +158,23 @@ def build_seeds_random_consecutive(
 class SeedExtensionDataset(ColliderMLDataset):
     """CAST seed-extension dataset — seed construction, target matrices, kinematics."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Disable the unbounded per-worker _raw_cache inherited from
+        # ColliderMLDataset.  At 50k events each cached entry is ~20 MB
+        # of exploded DataFrames, which would OOM every worker.
+        # Parquet data stays in the kernel page cache after first read;
+        # the polars explode overhead (~150 ms/event) is acceptable and
+        # can be absorbed by DataLoader pre-fetching.
+        self._raw_cache = {}
+
+    def __getitem__(self, idx):
+        # Bypass parent's caching — always load from Parquet.
+        # Kernel page cache amortises disk I/O after epoch 0.
+        event_id = self.event_ids[idx]
+        hits_raw, parts_raw = self._load_event(event_id)
+        return self._process_event(hits_raw, parts_raw, idx)
+
     # ------------------------------------------------------------------
     # Public entry
     # ------------------------------------------------------------------
