@@ -4,6 +4,7 @@ seed: 42
 data:
   process: ttbar
   pileup: pu200
+  cache_dir: null
   max_train_events: 50000
   max_val_events: 5000
   max_test_events: 5000

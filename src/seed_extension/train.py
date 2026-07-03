@@ -16,10 +16,8 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import CSVLogger
 
 from seed_extension.utils.repro import seed_everything
-from colliderml_dataloader import ColliderMLDataModule
 
 import seed_extension.data  # noqa: F401 — monkey-patches feature lists
-from seed_extension.data.dataset import SeedExtensionDataset
 from seed_extension.models.cast.model import CASTModel
 
 
@@ -59,8 +57,18 @@ def main() -> None:
         "/pscratch/sd/p/pmtuan/.cache/colliderml",
     )
 
-    datamodule = ColliderMLDataModule(
+    cache_dir = data_cfg.get("cache_dir")
+    if cache_dir is not None:
+        cache_dir = os.environ.get(
+            "COLLIDERML_FEATHER_CACHE_DIR",
+            cache_dir,
+        )
+
+    from seed_extension.data.cache import CachedColliderMLDataModule
+
+    datamodule = CachedColliderMLDataModule(
         data_dir=default_datadir,
+        cache_dir=cache_dir,
         process=data_cfg["process"],
         pileup=data_cfg["pileup"],
         max_train_events=data_cfg["max_train_events"],
@@ -68,7 +76,6 @@ def main() -> None:
         max_test_events=data_cfg["max_test_events"],
         batch_size=1,
         num_workers=data_cfg["num_workers"],
-        dataset_cls=SeedExtensionDataset,
         min_track_hits=data_cfg.get("min_track_hits", 5),
         min_pT=data_cfg.get("min_pT", 0.0),
         max_abs_eta=data_cfg.get("max_abs_eta", 4.0),
@@ -78,9 +85,8 @@ def main() -> None:
         predict_seed_hits=data_cfg.get("predict_seed_hits", False),
     )
 
-    # Patch in prefetch_factor and persistent_workers.
-    # ColliderMLDataModule's DataLoader methods don't expose these;
-    # we replace them after the datasets exist (post-setup).
+    # Patch in prefetch_factor and persistent_workers for both cached
+    # and Parquet-fallback DataLoader paths.
     prefetch = int(data_cfg.get("prefetch_factor", 2))
     workers = data_cfg["num_workers"]
     from torch.utils.data import DataLoader
