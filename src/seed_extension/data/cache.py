@@ -97,6 +97,8 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         max_test_events: int = 5000,
         batch_size: int = 1,
         num_workers: int = 8,
+        prefetch_factor: int = 2,
+        persistent_workers: bool = True,
         **dataset_kwargs: Any,
     ) -> None:
         super().__init__()
@@ -114,6 +116,8 @@ class CachedColliderMLDataModule(L.LightningDataModule):
             **dataset_kwargs,
         )
         self.cache_dir = cache_dir
+        self.prefetch_factor = prefetch_factor
+        self.persistent_workers = persistent_workers
         self.data_dir = self._parent.data_dir
         self.batch_size = self._parent.batch_size
         self.num_workers = self._parent.num_workers
@@ -207,6 +211,8 @@ class CachedColliderMLDataModule(L.LightningDataModule):
             self.trainset, batch_size=self.batch_size,
             num_workers=self._parent.num_workers, drop_last=True,
             shuffle=True, collate_fn=default_collate,
+            prefetch_factor=self.prefetch_factor,
+            persistent_workers=self.persistent_workers,
         )
 
     def val_dataloader(self):
@@ -214,6 +220,8 @@ class CachedColliderMLDataModule(L.LightningDataModule):
             self.valset, batch_size=self.batch_size,
             num_workers=self._parent.num_workers, shuffle=False,
             collate_fn=default_collate,
+            prefetch_factor=self.prefetch_factor,
+            persistent_workers=self.persistent_workers,
         )
 
     def test_dataloader(self):
