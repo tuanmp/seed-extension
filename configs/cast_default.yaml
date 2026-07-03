@@ -8,6 +8,7 @@ data:
   max_val_events: 5000
   max_test_events: 5000
   num_workers: 8
+  prefetch_factor: 4
   target_vertices: 200
   seed_strategy: random_consecutive
   seed_n_samples_val: 1
