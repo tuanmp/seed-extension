@@ -161,7 +161,5 @@ def main() -> None:
     trainer.fit(model=model, datamodule=datamodule)
     trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
 
-
-
 if __name__ == "__main__":
     main()
