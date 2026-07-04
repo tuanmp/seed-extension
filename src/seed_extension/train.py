@@ -8,8 +8,6 @@ from pathlib import Path
 
 import lightning as L
 import yaml
-
-import mlflow
 from lightning.pytorch.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
