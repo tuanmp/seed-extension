@@ -4,10 +4,14 @@ on:
   push:
     branches: ["**"]
   pull_request:
+    branches: ["main"]
+
+env:
+  COLLIDERML_DATA_DIR: ./data_cache
 
 jobs:
-  lint:
-    name: Lint (Python ${{ matrix.python-version }})
+  build:
+    name: Build (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -15,21 +19,25 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+  lint:
+    name: Lint (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
 
-      - name: Sync dependencies
-        run: uv sync --group dev
+    steps:
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Lint
         run: make lint
@@ -37,27 +45,21 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    needs: build
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --group dev
+      - name: Obtain test data
+        run: 
+          uv colliderml download --dataset ttbar-pu200 --max-events 10 --output-dir ${COLLIDERML_DATA_DIR}
 
       - name: Test
         run: make test
