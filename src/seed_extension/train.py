@@ -125,7 +125,6 @@ def main() -> None:
 
     exp_name = cfg.get("experiment_name", "cast_baseline")
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "./mlruns")
-    mlflow.system_metrics.enable_system_metrics_logging()
 
     csv_logger = CSVLogger(save_dir="logs", name=exp_name)
     mlflow_logger = MLflowLogger(
@@ -164,9 +163,6 @@ def main() -> None:
     trainer.fit(model=model, datamodule=datamodule)
     trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
 
-    best_ckpt_path = trainer.checkpoint_callback.best_model_path
-    if best_ckpt_path:
-        mlflow.log_artifact(best_ckpt_path)
 
 
 if __name__ == "__main__":
