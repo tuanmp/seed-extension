@@ -9,6 +9,10 @@ on:
 env:
   COLLIDERML_DATA_DIR: ./data_cache
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build (Python ${{ matrix.python-version }})
@@ -69,7 +73,8 @@ jobs:
       - name: Obtain test data
         run: |
           uv run colliderml download --channels ttbar --pileup pu200 --objects "particles,tracker_hits" --max-events 10 --out ${COLLIDERML_DATA_DIR}
-          find ${COLLIDERML_DATA_DIR} -type d
+          echo "Parquet files:"
+          find ${COLLIDERML_DATA_DIR} -type f -name '*.parquet' | head -20
 
       - name: Test
         run: make test
