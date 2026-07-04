@@ -8,12 +8,14 @@ from pathlib import Path
 
 import lightning as L
 import yaml
+
+import mlflow
 from lightning.pytorch.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
 )
-from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.loggers import CSVLogger, MLflowLogger
 
 from seed_extension.utils.repro import seed_everything
 
@@ -122,7 +124,15 @@ def main() -> None:
     )
 
     exp_name = cfg.get("experiment_name", "cast_baseline")
-    logger = CSVLogger(save_dir="logs", name=exp_name)
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "./mlruns")
+    mlflow.system_metrics.enable_system_metrics_logging()
+
+    csv_logger = CSVLogger(save_dir="logs", name=exp_name)
+    mlflow_logger = MLflowLogger(
+        experiment_name=exp_name,
+        tracking_uri=tracking_uri,
+        log_model=True,
+    )
 
     callbacks = [
         ModelCheckpoint(
@@ -148,11 +158,15 @@ def main() -> None:
         limit_train_batches=trainer_cfg.get("limit_train_batches", 1.0),
         limit_val_batches=trainer_cfg.get("limit_val_batches", 1.0),
         callbacks=callbacks,
-        logger=logger,
+        logger=[csv_logger, mlflow_logger],
     )
 
     trainer.fit(model=model, datamodule=datamodule)
     trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+
+    best_ckpt_path = trainer.checkpoint_callback.best_model_path
+    if best_ckpt_path:
+        mlflow.log_artifact(best_ckpt_path)
 
 
 if __name__ == "__main__":
