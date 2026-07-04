@@ -60,7 +60,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
+
       - name: Prepare environment
         uses: ./.github/actions/setup-dev
         with:
@@ -68,7 +68,7 @@ jobs:
 
       - name: Obtain test data
         run: 
-          uv colliderml download --dataset ttbar-pu200 --max-events 10 --output-dir ${COLLIDERML_DATA_DIR}
+          uv run colliderml download --dataset ttbar-pu200 --max-events 10 --output-dir ${COLLIDERML_DATA_DIR}
 
       - name: Test
         run: make test
