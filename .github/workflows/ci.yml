@@ -68,7 +68,7 @@ jobs:
 
       - name: Obtain test data
         run: 
-          uv run colliderml download --dataset ttbar-pu200 --max-events 10 --output-dir ${COLLIDERML_DATA_DIR}
+          uv run colliderml download --channels ttbar --pileup pu200 --objects "particles,tracker_hits" --max-events 10 --out ${COLLIDERML_DATA_DIR}
 
       - name: Test
         run: make test
