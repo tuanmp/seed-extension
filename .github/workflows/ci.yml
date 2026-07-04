@@ -67,8 +67,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Obtain test data
-        run: 
+        run: |
           uv run colliderml download --channels ttbar --pileup pu200 --objects "particles,tracker_hits" --max-events 10 --out ${COLLIDERML_DATA_DIR}
+          find ${COLLIDERML_DATA_DIR} -type d
 
       - name: Test
         run: make test

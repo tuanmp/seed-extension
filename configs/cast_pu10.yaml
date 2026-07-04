@@ -5,9 +5,9 @@ data:
   process: ttbar
   pileup: pu200
   cache_dir: null
-  max_train_events: 50000
-  max_val_events: 5000
-  max_test_events: 5000
+  max_train_events: 500
+  max_val_events: 500
+  max_test_events: 500
   num_workers: 8
   target_vertices: 50
   prefetch_factor: 4
@@ -20,6 +20,7 @@ data:
   predict_seed_hits: false
   use_detector_features: true
   normalize_coords: true
+  cache_dir: /pscratch/sd/p/pmtuan/.cache/colliderml-feather
 
 model:
   type: cast
