@@ -1,25 +1,25 @@
 experiment_name: cast_baseline
-# seed: 42  # uncomment for reproducibility
+seed: 42
 
 data:
   process: ttbar
   pileup: pu200
-  cache_dir: null
-  max_train_events: 50000
-  max_val_events: 5000
-  max_test_events: 5000
+  max_train_events: 60000
+  max_val_events: 1000
+  max_test_events: 1000
   num_workers: 8
+  target_vertices: 50
   prefetch_factor: 4
-  target_vertices: 200
   seed_strategy: random_consecutive
   seed_n_samples_val: 1
   min_track_hits: 5
-  min_pT: 0.0
+  min_pT: 0.9 # GeV
   max_abs_eta: 4.0
   primary_only: false
   predict_seed_hits: false
   use_detector_features: true
   normalize_coords: true
+  cache_dir: /pscratch/sd/p/pmtuan/.cache/colliderml-feather
 
 model:
   type: cast
@@ -41,7 +41,7 @@ model:
   lambda_hit: 1.0
 
 trainer:
-  max_epochs: 50
+  max_epochs: 500
   accelerator: auto
   devices: 1
   precision: bf16-mixed

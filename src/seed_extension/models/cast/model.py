@@ -4,7 +4,7 @@ import torch
 from .attention import CrossAttentionDecoder, SeedSelfAttention
 from .embedders import HitEmbedder, SeedEmbedder
 from .encoders import IdentityEncoder
-from .loss import info_nce_loss
+from .loss import joint_loss
 from .metrics import compute_binned_metrics, compute_efficiency, compute_purity
 
 
@@ -25,6 +25,8 @@ class CASTModel(L.LightningModule):
         weight_decay=1e-4,
         lr_scheduler="cosine",
         warmup_steps=1000,
+        lambda_seed=1.0,
+        lambda_hit=1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -87,8 +89,14 @@ class CASTModel(L.LightningModule):
             targets = targets.unsqueeze(0)
 
         scores = self(hits, seeds)
-        loss = info_nce_loss(scores, targets, temperature=1.0)
+        loss, L_seed, L_hit = joint_loss(
+            scores, targets, temperature=1.0,
+            lambda_seed=self.hparams.lambda_seed,
+            lambda_hit=self.hparams.lambda_hit,
+        )
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_loss_seed", L_seed, on_step=False, on_epoch=True)
+        self.log("train_loss_hit", L_hit, on_step=False, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -107,7 +115,11 @@ class CASTModel(L.LightningModule):
             targets = targets.unsqueeze(0)
 
         scores = self(hits, seeds)
-        loss = info_nce_loss(scores, targets, temperature=1.0)
+        loss, L_seed, L_hit = joint_loss(
+            scores, targets, temperature=1.0,
+            lambda_seed=self.hparams.lambda_seed,
+            lambda_hit=self.hparams.lambda_hit,
+        )
 
         scores_2d = scores.squeeze(0)
         if scores_2d.size(0) == 0 or scores_2d.size(1) == 0:
@@ -151,7 +163,11 @@ class CASTModel(L.LightningModule):
             targets = targets.unsqueeze(0)
 
         scores = self(hits, seeds)
-        loss = info_nce_loss(scores, targets, temperature=1.0)
+        loss, L_seed, L_hit = joint_loss(
+            scores, targets, temperature=1.0,
+            lambda_seed=self.hparams.lambda_seed,
+            lambda_hit=self.hparams.lambda_hit,
+        )
 
         scores_2d = scores.squeeze(0)
         self.log("test_loss", loss, on_step=False, on_epoch=True)
