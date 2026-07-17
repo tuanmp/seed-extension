@@ -72,22 +72,38 @@ def hit_side_ce_loss(scores, targets, temperature=1.0):
     return loss
 
 
-def joint_loss(scores, targets, temperature=1.0, lambda_seed=1.0, lambda_hit=1.0):
+def joint_loss(scores, targets, temperature=1.0, lambda_seed=1.0, lambda_hit=1.0,
+               use_null_seed=False):
     """Combined seed-side InfoNCE and hit-side cross-entropy.
 
     Args:
-        scores: (B, N_s, N_h) similarity scores
-        targets: (B, N_s, N_h) binary target matrix
+        scores: (B, N, N_h) similarity scores, where N = N_s + (1 if use_null_seed else 0)
+        targets: (B, N_s, N_h) binary target matrix (without null row)
         temperature: passed through to both sub-losses (default 1.0)
         lambda_seed: weight for seed-side InfoNCE
         lambda_hit: weight for hit-side cross-entropy
+        use_null_seed: if True, scores has an extra null row at index N_s;
+                       seed-side loss uses only the first N_s rows, hit-side
+                       CE sees the full matrix with null-labeled orphan hits.
 
     Returns:
         total: scalar joint loss
         L_seed: unscaled seed-side component (for logging)
         L_hit: unscaled hit-side component (for logging)
     """
-    L_seed = info_nce_loss(scores, targets, temperature)
-    L_hit = hit_side_ce_loss(scores, targets, temperature)
+    if use_null_seed:
+        N_s = targets.shape[1]
+        scores_seed = scores[:, :N_s, :]                    # (B, N_s, N_h)
+
+        has_seed = targets.sum(dim=1) > 0                   # (B, N_h)
+        null_row = (~has_seed).float().unsqueeze(1)         # (B, 1, N_h)
+        targets_ext = torch.cat([targets, null_row], dim=1)  # (B, N_s+1, N_h)
+
+        L_seed = info_nce_loss(scores_seed, targets, temperature)
+        L_hit = hit_side_ce_loss(scores, targets_ext, temperature)
+    else:
+        L_seed = info_nce_loss(scores, targets, temperature)
+        L_hit = hit_side_ce_loss(scores, targets, temperature)
+
     total = lambda_seed * L_seed + lambda_hit * L_hit
     return total, L_seed, L_hit

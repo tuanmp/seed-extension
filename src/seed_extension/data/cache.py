@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 import lightning as L
 import pyarrow.feather as feather
@@ -13,6 +13,7 @@ from lightning.pytorch.utilities import rank_zero_info, rank_zero_warn
 from torch.utils.data import DataLoader, default_collate
 
 from colliderml_dataloader import ColliderMLDataModule
+import polars as pl
 
 from seed_extension.data.dataset import SeedExtensionDataset
 from seed_extension.data.seed_utils import PARTICLE_FEATURES, TRACKER_HIT_FEATURES
@@ -66,6 +67,8 @@ class CachedColliderMLDataset(SeedExtensionDataset):
         event_id = self.event_ids[idx]
         hits_raw = feather.read_feather(self.hits_dir / f"{event_id}.feather")
         parts_raw = feather.read_feather(self.parts_dir / f"{event_id}.feather")
+        hits_raw = pl.from_pandas(hits_raw)
+        parts_raw = pl.from_pandas(parts_raw)
         return self._process_event(hits_raw, parts_raw, idx)
 
 
@@ -89,10 +92,26 @@ class CachedColliderMLDataModule(L.LightningDataModule):
         num_workers: int = 8,
         prefetch_factor: int = 2,
         persistent_workers: bool = True,
-        **dataset_kwargs: Any,
+        min_track_hits: int = 5,
+        min_pT: float = 0.0,
+        max_abs_eta: float = 4.0,
+        seed_strategy: str = "random_consecutive",
+        target_vertices: int = 200,
+        primary_only: bool = False,
+        predict_seed_hits: bool = False,
+        n_seed_hits: int = 3,
+        dataset_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
-        kwargs = dict(dataset_kwargs)
+        kwargs = dict(dataset_kwargs) if dataset_kwargs else {}
+        kwargs.setdefault("min_track_hits", min_track_hits)
+        kwargs.setdefault("min_pT", min_pT)
+        kwargs.setdefault("max_abs_eta", max_abs_eta)
+        kwargs.setdefault("seed_strategy", seed_strategy)
+        kwargs.setdefault("target_vertices", target_vertices)
+        kwargs.setdefault("primary_only", primary_only)
+        kwargs.setdefault("predict_seed_hits", predict_seed_hits)
+        kwargs.setdefault("n_seed_hits", n_seed_hits)
         kwargs.setdefault("dataset_cls", SeedExtensionDataset)
         self._parent = ColliderMLDataModule(
             data_dir=data_dir,

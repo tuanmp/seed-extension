@@ -39,6 +39,7 @@ model:
   warmup_steps: 1000
   lambda_seed: 1.0
   lambda_hit: 1.0
+  use_null_seed: false
 
 trainer:
   max_epochs: 500
