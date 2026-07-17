@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=1.26,<3.0",
   "pyyaml>=6.0,<7.0",
   "colliderml-dataloader @ git+https://github.com/tuanmp/colliderml-dataloader.git",
+  "mlflow",
 ]
 
 [dependency-groups]

@@ -1,0 +1,27 @@
+name: Setup development environment
+description: Checkout the repository, install Python, sync uv dependencies, and prepare the workspace.
+
+inputs:
+  python-version:
+    description: Python version to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
+    - name: Sync dependencies
+      shell: bash
+      run: uv sync --group dev

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import os
+import os, signal
 from pathlib import Path
 
 import lightning as L
@@ -13,13 +13,12 @@ from lightning.pytorch.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
 )
-from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.loggers import CSVLogger, MLFlowLogger
+from lightning.pytorch.plugins.environments import SLURMEnvironment
 
 from seed_extension.utils.repro import seed_everything
-from colliderml_dataloader import ColliderMLDataModule
 
-import seed_extension.data  # noqa: F401 — monkey-patches feature lists
-from seed_extension.data.dataset import SeedExtensionDataset
+import seed_extension.data  # noqa: F401 — registers feature lists
 from seed_extension.models.cast.model import CASTModel
 
 
@@ -59,8 +58,18 @@ def main() -> None:
         "/pscratch/sd/p/pmtuan/.cache/colliderml",
     )
 
-    datamodule = ColliderMLDataModule(
+    cache_dir = data_cfg.get("cache_dir")
+    if cache_dir is not None:
+        cache_dir = os.environ.get(
+            "COLLIDERML_FEATHER_CACHE_DIR",
+            cache_dir,
+        )
+
+    from seed_extension.data.cache import CachedColliderMLDataModule
+
+    datamodule = CachedColliderMLDataModule(
         data_dir=default_datadir,
+        cache_dir=cache_dir,
         process=data_cfg["process"],
         pileup=data_cfg["pileup"],
         max_train_events=data_cfg["max_train_events"],
@@ -68,35 +77,18 @@ def main() -> None:
         max_test_events=data_cfg["max_test_events"],
         batch_size=1,
         num_workers=data_cfg["num_workers"],
-        dataset_cls=SeedExtensionDataset,
-        min_track_hits=data_cfg.get("min_track_hits", 5),
-        min_pT=data_cfg.get("min_pT", 0.0),
-        max_abs_eta=data_cfg.get("max_abs_eta", 4.0),
-        seed_strategy=data_cfg.get("seed_strategy", "random_consecutive"),
-        target_vertices=data_cfg.get("target_vertices", 200),
-        primary_only=data_cfg.get("primary_only", False),
-        predict_seed_hits=data_cfg.get("predict_seed_hits", False),
+        prefetch_factor=int(data_cfg.get("prefetch_factor", 2)),
+        persistent_workers=True,
+        dataset_kwargs=dict(
+            min_track_hits=data_cfg.get("min_track_hits", 5),
+            min_pT=data_cfg.get("min_pT", 0.0),
+            max_abs_eta=data_cfg.get("max_abs_eta", 4.0),
+            seed_strategy=data_cfg.get("seed_strategy", "random_consecutive"),
+            target_vertices=data_cfg.get("target_vertices", 200),
+            primary_only=data_cfg.get("primary_only", False),
+            predict_seed_hits=data_cfg.get("predict_seed_hits", False),
+        ),
     )
-
-    # Patch in prefetch_factor and persistent_workers.
-    # ColliderMLDataModule's DataLoader methods don't expose these;
-    # we replace them after the datasets exist (post-setup).
-    prefetch = int(data_cfg.get("prefetch_factor", 2))
-    workers = data_cfg["num_workers"]
-    from torch.utils.data import DataLoader
-
-    _setup_orig = datamodule.setup
-
-    def _setup_patched(stage=None):
-        _setup_orig(stage)
-        dl_kw = dict(batch_size=1, num_workers=workers,
-                     prefetch_factor=prefetch, persistent_workers=True)
-        datamodule.train_dataloader = lambda: DataLoader(
-            datamodule.trainset, shuffle=True, drop_last=True, **dl_kw)
-        datamodule.val_dataloader = lambda: DataLoader(
-            datamodule.valset, shuffle=False, **dl_kw)
-
-    datamodule.setup = _setup_patched
 
     model = CASTModel(
         d_model=int(model_cfg["d_model"]),
@@ -116,7 +108,14 @@ def main() -> None:
     )
 
     exp_name = cfg.get("experiment_name", "cast_baseline")
-    logger = CSVLogger(save_dir="logs", name=exp_name)
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "./mlruns")
+
+    csv_logger = CSVLogger(save_dir="logs", name=exp_name)
+    mlflow_logger = MLFlowLogger(
+        experiment_name=exp_name,
+        tracking_uri=tracking_uri,
+        log_model=True,
+    )
 
     callbacks = [
         ModelCheckpoint(
@@ -127,6 +126,10 @@ def main() -> None:
         ),
         EarlyStopping(monitor="val_loss", mode="min", patience=3),
         LearningRateMonitor(logging_interval="epoch"),
+    ]
+
+    plugins = [
+        SLURMEnvironment(auto_requeue=True, requeue_signal=signal.SIGTERM),
     ]
 
     trainer = L.Trainer(
@@ -142,12 +145,13 @@ def main() -> None:
         limit_train_batches=trainer_cfg.get("limit_train_batches", 1.0),
         limit_val_batches=trainer_cfg.get("limit_val_batches", 1.0),
         callbacks=callbacks,
-        logger=logger,
+        logger=[csv_logger, mlflow_logger],
+        plugins=plugins,
+        val_check_interval=0.1
     )
 
     trainer.fit(model=model, datamodule=datamodule)
     trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
-
 
 if __name__ == "__main__":
     main()

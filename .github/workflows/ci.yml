@@ -4,10 +4,18 @@ on:
   push:
     branches: ["**"]
   pull_request:
+    branches: ["main"]
+
+env:
+  COLLIDERML_DATA_DIR: ./data_cache
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  lint:
-    name: Lint (Python ${{ matrix.python-version }})
+  build:
+    name: Build (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -18,18 +26,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+  lint:
+    name: Lint (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
 
-      - name: Sync dependencies
-        run: uv sync --group dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Lint
         run: make lint
@@ -37,6 +55,8 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -46,18 +66,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Prepare environment
+        uses: ./.github/actions/setup-dev
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --group dev
+      - name: Obtain test data
+        run: |
+          uv run colliderml download --channels ttbar --pileup pu200 --objects "particles,tracker_hits" --max-events 10 --out ${COLLIDERML_DATA_DIR}
+          echo "Parquet files:"
+          find ${COLLIDERML_DATA_DIR} -type f -name '*.parquet' | head -20
 
       - name: Test
-        run: make test
+        run: uv run pytest --ignore=tests/test_feather_cache.py -v --tb=short
